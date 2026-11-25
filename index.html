@@ -21,30 +21,14 @@
 
     Write-Host ''
     Write-Host '  PC-Mantenimiento' -ForegroundColor Cyan
-    # Clave de GitHub cifrada con la contrasena personal (se crea con configurar.txt)
-    $blob = 'duYUkCmUWoKBL9AwsJ0E8Uw19lRwMtY1YuBBgaoTL5i7REOZPhaPfwurczo+vttjjrXTYjyC+yAQJ7wK76pz43ShhfYbbAoUTUlccltJQm+c7bM34aDMmhyB6+TCSvuLGeF+7C6lDJNhBZUIdtNaQoJdgyifTSE2oEF5M4qP+LCXNiEui4XFnZ2YTHEmuly5X7aw4jxvaGEuinoymAfFEw=='
-    $open = {
-        param([string]$pass)
-        $all = [Convert]::FromBase64String($blob)
-        $salt = $all[0..15]; $iv = $all[16..31]; $ct = $all[32..($all.Length - 33)]; $mac = $all[($all.Length - 32)..($all.Length - 1)]
-        $kdf = New-Object Security.Cryptography.Rfc2898DeriveBytes($pass, [byte[]]$salt, 300000, [Security.Cryptography.HashAlgorithmName]::SHA256)
-        $k = $kdf.GetBytes(32); $hk = $kdf.GetBytes(32)
-        $calc = [Security.Cryptography.HMACSHA256]::new($hk).ComputeHash([byte[]]($all[0..($all.Length - 33)]))
-        if ([Convert]::ToBase64String($calc) -ne [Convert]::ToBase64String([byte[]]$mac)) { return $null }
-        $aes = [Security.Cryptography.Aes]::Create(); $aes.Key = $k; $aes.IV = [byte[]]$iv
-        $pt = $aes.CreateDecryptor().TransformFinalBlock([byte[]]$ct, 0, $ct.Count)
-        return [Text.Encoding]::UTF8.GetString($pt)
-    }
     $ok = $false
     for ($try = 1; $try -le 3 -and -not $ok; $try++) {
-        $sec = Read-Host '  Contrasena (no se muestra; Enter vacio = usar la copia de esta PC)' -AsSecureString
-        $pass = [Runtime.InteropServices.Marshal]::PtrToStringBSTR([Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec))
-        $pass = $pass -replace '[\x00-\x1F]', ''
-        if (-not $pass) { break }
-        $key = $null
-        try { $key = & $open $pass } catch {}
-        $pass = $null
-        if (-not $key) { Write-Host '  Contrasena incorrecta.' -ForegroundColor Red; continue }
+        Write-Host '  Copia tu clave de GitHub (github_pat_...) con Ctrl+C desde tu gestor de contrasenas.'
+        $ans = Read-Host '  Luego pulsa Enter  (o escribe N para usar la copia que ya esta en esta PC)'
+        if ($ans -match '^[nN]') { break }
+        $key = (([string](Get-Clipboard -Raw)) -replace '[\s\x00-\x1F]', '')
+        if ($key -notmatch '^(github_pat_|ghp_)\w{20,}$') { Write-Host '  Lo copiado no es una clave de GitHub (empieza con github_pat_).' -ForegroundColor Red; continue }
+        Set-Clipboard -Value ' '   # no dejar la clave en el portapapeles de esta PC
         $h = @{ Authorization = "Bearer $key"; Accept = 'application/vnd.github.raw'; 'X-GitHub-Api-Version' = '2022-11-28' }
         try {
             Write-Host '  Descargando la ultima version...'
@@ -61,7 +45,7 @@
             Remove-Item $tmp -Force -ErrorAction SilentlyContinue
             $code = 0
             if ($_.Exception.Response) { $code = [int]$_.Exception.Response.StatusCode }
-            if ($code -in 401, 403, 404) { Write-Host '  La clave de GitHub vencio o fue borrada. Crea otra y corre configurar.txt.' -ForegroundColor Red }
+            if ($code -in 401, 403, 404) { Write-Host '  La clave de GitHub vencio o fue borrada. Crea otra en GitHub (Fine-grained tokens).' -ForegroundColor Red }
             else { Write-Host "  No se pudo descargar: $($_.Exception.Message)" -ForegroundColor Red }
             break
         } finally { $key = $null; $h = $null }
