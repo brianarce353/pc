@@ -1,0 +1,98 @@
+# PC-Mantenimiento - lanzador publico (no contiene el script, solo lo descarga)
+# Uso, en PowerShell como ADMINISTRADOR:
+#     irm brianarce353.github.io/pc | iex
+& {
+    $api = 'https://api.github.com/repos/brianarce353/pc-mantenimiento/contents'
+    $dir = 'C:\PC-Mantenimiento'
+    $tecnicoPorDefecto = 'Brian Arce'
+
+    $id = [Security.Principal.WindowsIdentity]::GetCurrent()
+    if (-not ([Security.Principal.WindowsPrincipal]$id).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+        Write-Host ''
+        Write-Host '  Esta ventana NO es de administrador.' -ForegroundColor Red
+        Write-Host '  Abre: tecla Windows + X > Terminal (Administrador) > Si. Luego pega la linea otra vez.' -ForegroundColor Yellow
+        return
+    }
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+    New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    $ps1 = Join-Path $dir 'PC-Mantenimiento.ps1'
+    $tmp = Join-Path $dir 'PC-Mantenimiento.descarga'
+
+    Write-Host ''
+    Write-Host '  PC-Mantenimiento' -ForegroundColor Cyan
+    $ok = $false
+    for ($try = 1; $try -le 3 -and -not $ok; $try++) {
+        $sec = Read-Host '  Clave de acceso (no se muestra; Enter vacio = usar la copia de esta PC)' -AsSecureString
+        $key = [Runtime.InteropServices.Marshal]::PtrToStringBSTR([Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec))
+        if (-not $key) { break }
+        $h = @{ Authorization = "Bearer $key"; Accept = 'application/vnd.github.raw'; 'X-GitHub-Api-Version' = '2022-11-28' }
+        try {
+            Write-Host '  Descargando la ultima version...'
+            Invoke-WebRequest "$api/PC-Mantenimiento.ps1" -Headers $h -OutFile $tmp -UseBasicParsing -ErrorAction Stop
+            # Nunca correr un archivo cortado o danado
+            $errs = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($tmp, [ref]$null, [ref]$errs)
+            $txt = [IO.File]::ReadAllText($tmp)
+            if ($errs -or $txt -notmatch '\$ScriptVersion\s*=' -or $txt -notmatch '#Requires -RunAsAdministrator') { throw 'El archivo descargado no es valido' }
+            Move-Item $tmp $ps1 -Force
+            try { Invoke-WebRequest "$api/INSTRUCCIONES.txt" -Headers $h -OutFile (Join-Path $dir 'INSTRUCCIONES.txt') -UseBasicParsing -ErrorAction Stop } catch {}
+            $ok = $true
+        } catch {
+            Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+            $code = 0
+            if ($_.Exception.Response) { $code = [int]$_.Exception.Response.StatusCode }
+            if ($code -in 401, 403, 404) { Write-Host '  Clave incorrecta o vencida.' -ForegroundColor Red }
+            else { Write-Host "  No se pudo descargar: $($_.Exception.Message)" -ForegroundColor Red; break }
+        } finally { $key = $null; $h = $null }
+    }
+    if (-not $ok) {
+        if (Test-Path $ps1) { Write-Host '  Se usara la copia que ya estaba en esta PC.' -ForegroundColor Yellow }
+        else { Write-Host '  No hay copia en esta PC. Revisa la clave o la conexion y vuelve a intentar.' -ForegroundColor Yellow; return }
+    }
+    Get-ChildItem $dir -File | Unblock-File -ErrorAction SilentlyContinue
+
+    $ver = if ([IO.File]::ReadAllText($ps1) -match "\`$ScriptVersion\s*=\s*'([^']+)'") { $Matches[1] } else { '?' }
+    Write-Host ''
+    Write-Host "  Version $ver   (carpeta: $dir)" -ForegroundColor Green
+    Write-Host ''
+    Write-Host '   1) Normal  (updates, drivers, apps, limpieza, antivirus rapido, reparacion)'
+    Write-Host '   2) Completo SIN copia de seguridad   (2-4 horas)'
+    Write-Host '   3) Completo CON copia de seguridad a disco externo'
+    Write-Host '   4) Solo verificar  (~5 min, no cambia nada)'
+    Write-Host '   5) Solo AdwCleaner + limpieza rapida  (~15 min)'
+    Write-Host '   6) Salir'
+    $op = Read-Host '  Elige una opcion (1-6)'
+    if ($op -notmatch '^[1-5]$') { Write-Host '  Cancelado.'; return }
+
+    $t = Read-Host "  Tecnico [Enter = $tecnicoPorDefecto]"
+    $c = Read-Host '  Cliente (nombre que sale en el reporte, Enter = ninguno)'
+    $p = @{ Tecnico = $(if ($t) { $t } else { $tecnicoPorDefecto }) }
+    if ($c) { $p.Cliente = $c }
+
+    $completo = @{ Harden = $true; CleanBrowsers = $true; Debloat = $true; AdwCleanerLimpiar = $true; FullScan = $true; Excel = $true }
+    switch ($op) {
+        '2' { $p += $completo }
+        '3' {
+            $p += $completo
+            do {
+                $d = (Read-Host '  Letra del disco externo (ej. E)').Trim().TrimEnd(':', '\')
+                $okD = $d -match '^[A-Za-z]$' -and (Test-Path "${d}:\") -and ("${d}:" -ne $env:SystemDrive)
+                if (-not $okD) { Write-Host '  Ese disco no existe o es el disco de Windows. Conecta el disco externo y escribe su letra.' -ForegroundColor Yellow }
+            } until ($okD)
+            $p.Backup = $true; $p.BackupPath = "${d}:\PC-Mantenimiento-Backups"
+        }
+        '4' { $p.Verificar = $true }
+        '5' { $p += @{ AdwCleanerLimpiar = $true; SkipUpdates = $true; SkipDrivers = $true; SkipApps = $true; SkipRepair = $true; NoRestorePoint = $true } }
+    }
+    if ($op -in '2', '3') {
+        if ((Read-Host '  Elegir programas para desinstalar al principio? (S/N)  [N si lo vas a dejar corriendo solo]') -match '^[sSyY]') { $p.Desinstalar = $true }
+        if ((Read-Host '  Escaneo antivirus COMPLETO (puede tardar horas)? (S/N)') -notmatch '^[sSyY]') { $p.Remove('FullScan') }
+    }
+
+    Write-Host ''
+    Write-Host ('  Ejecutando: PC-Mantenimiento.ps1 ' + (($p.GetEnumerator() | Sort-Object Name | ForEach-Object { if ($_.Value -is [bool]) { "-$($_.Name)" } else { "-$($_.Name) `"$($_.Value)`"" } }) -join ' ')) -ForegroundColor DarkGray
+    Write-Host '  No cierres esta ventana.' -ForegroundColor Yellow
+    Push-Location $dir
+    try { & $ps1 @p } finally { Pop-Location }
+}
