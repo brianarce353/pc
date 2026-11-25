@@ -22,7 +22,7 @@
     Write-Host ''
     Write-Host '  PC-Mantenimiento' -ForegroundColor Cyan
     # Clave de GitHub cifrada con la contrasena personal (se crea con configurar.txt)
-    $blob = 'PEGAR_AQUI'
+    $blob = 'duYUkCmUWoKBL9AwsJ0E8Uw19lRwMtY1YuBBgaoTL5i7REOZPhaPfwurczo+vttjjrXTYjyC+yAQJ7wK76pz43ShhfYbbAoUTUlccltJQm+c7bM34aDMmhyB6+TCSvuLGeF+7C6lDJNhBZUIdtNaQoJdgyifTSE2oEF5M4qP+LCXNiEui4XFnZ2YTHEmuly5X7aw4jxvaGEuinoymAfFEw=='
     $open = {
         param([string]$pass)
         $all = [Convert]::FromBase64String($blob)
