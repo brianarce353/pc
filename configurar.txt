@@ -1,0 +1,46 @@
+# PC-Mantenimiento - configurar tu contrasena personal (se corre UNA sola vez, en tu PC)
+#   irm brianarce353.github.io/pc/configurar.txt | iex
+# Toma la clave de GitHub del portapapeles, la prueba y la cifra con una contrasena tuya.
+# El resultado (texto cifrado) se puede publicar: sin tu contrasena no sirve.
+& {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    Write-Host ''
+    Write-Host '  1) Copia la clave de GitHub (github_pat_...) con Ctrl+C y luego pulsa Enter aqui.' -ForegroundColor Cyan
+    [void](Read-Host '  Enter cuando la hayas copiado')
+    $tok = (([string](Get-Clipboard -Raw)) -replace '[\s\x00-\x1F]', '')
+    if ($tok -notmatch '^(github_pat_|ghp_)[A-Za-z0-9_]{20,}$') { Write-Host '  Lo copiado no parece una clave de GitHub (debe empezar con github_pat_).' -ForegroundColor Red; return }
+    try {
+        $h = @{ Authorization = "Bearer $tok"; Accept = 'application/vnd.github.raw'; 'X-GitHub-Api-Version' = '2022-11-28' }
+        $r = Invoke-WebRequest 'https://api.github.com/repos/brianarce353/pc-mantenimiento/contents/README.md' -Headers $h -UseBasicParsing -ErrorAction Stop
+        Write-Host '  La clave de GitHub funciona.' -ForegroundColor Green
+    } catch { Write-Host "  GitHub rechazo la clave: $($_.Exception.Message)" -ForegroundColor Red; return }
+
+    Write-Host ''
+    Write-Host '  2) Inventa una contrasena FACIL DE RECORDAR para ti (minimo 10 caracteres).' -ForegroundColor Cyan
+    Write-Host '     Ej.: tres palabras y un numero. Es la que vas a escribir en cada PC.'
+    $b = { param($s) [Runtime.InteropServices.Marshal]::PtrToStringBSTR([Runtime.InteropServices.Marshal]::SecureStringToBSTR($s)) }
+    do {
+        $p1 = & $b (Read-Host '  Contrasena' -AsSecureString)
+        $p2 = & $b (Read-Host '  Repitela' -AsSecureString)
+        $ok = ($p1 -eq $p2) -and $p1.Length -ge 10
+        if (-not $ok) { Write-Host '  No coinciden o es muy corta (minimo 10). Intenta otra vez.' -ForegroundColor Yellow }
+    } until ($ok)
+
+    $rng = [Security.Cryptography.RandomNumberGenerator]::Create()
+    $salt = New-Object byte[] 16; $rng.GetBytes($salt)
+    $kdf = New-Object Security.Cryptography.Rfc2898DeriveBytes($p1, $salt, 300000, [Security.Cryptography.HashAlgorithmName]::SHA256)
+    $k = $kdf.GetBytes(32); $hk = $kdf.GetBytes(32)
+    $aes = [Security.Cryptography.Aes]::Create(); $aes.Key = $k; $aes.GenerateIV()
+    $pt = [Text.Encoding]::UTF8.GetBytes($tok)
+    $ct = $aes.CreateEncryptor().TransformFinalBlock($pt, 0, $pt.Length)
+    $body = [byte[]]($salt + $aes.IV + $ct)
+    $mac = [Security.Cryptography.HMACSHA256]::new($hk).ComputeHash($body)
+    $blob = [Convert]::ToBase64String([byte[]]($body + $mac))
+    Set-Clipboard -Value $blob
+    Write-Host ''
+    Write-Host '  3) Listo. El texto cifrado ya esta copiado. Pegalo en el chat con Claude:' -ForegroundColor Green
+    Write-Host ''
+    Write-Host "  $blob"
+    Write-Host ''
+    Write-Host '  (Ese texto es seguro de compartir. NUNCA compartas la clave github_pat_ ni tu contrasena.)' -ForegroundColor DarkGray
+}
